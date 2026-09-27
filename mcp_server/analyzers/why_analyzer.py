@@ -69,7 +69,7 @@ class WhyAnalyzer:
         """Get commit log for a specific file."""
         result = subprocess.run(
             [
-                "git", "-C", str(self.repo_path),
+                "git", "--no-pager", "-C", str(self.repo_path),
                 "log", "--follow",
                 f"--max-count={limit}",
                 "--pretty=format:%H|%ae|%ad|%s|%b",

@@ -46,11 +46,21 @@ from analyzers.blast_radius import BlastRadiusAnalyzer
 
 def get_repo_path() -> str:
     """Get repo path from CLI args or environment variable."""
+    path = None
     if "--repo" in sys.argv:
         idx = sys.argv.index("--repo")
         if idx + 1 < len(sys.argv):
-            return sys.argv[idx + 1]
-    return os.environ.get("COPILOTLENS_REPO", os.getcwd())
+            path = sys.argv[idx + 1]
+    
+    # If the IDE failed to expand the VS Code-style variable, or it's missing, use a fallback
+    if not path or path == "${workspaceFolder}":
+        path = os.environ.get("COPILOTLENS_REPO")
+        
+    if not path or path == "${workspaceFolder}":
+        # Fallback to the repository root (parent of the mcp_server directory)
+        path = str(Path(__file__).parent.parent.absolute())
+        
+    return path
 
 
 REPO_PATH = get_repo_path()
@@ -563,7 +573,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Suppress default HTTP logs
 
+    def do_POST(self):
+        if self.path == "/api/sync-instructions":
+            result = generate_copilot_instructions()
+            body = result.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self._send_text(404, "Not found")
+
     def do_GET(self):
+        next_out_dir = Path(__file__).parent.parent / "dashboard-next" / "out"
+        dashboard_dir = next_out_dir if next_out_dir.exists() else (Path(__file__).parent.parent / "dashboard")
+
         if self.path == "/api/data":
             data = get_dashboard_data()
             body = json.dumps(data).encode()
@@ -573,20 +599,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", len(body))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == "/" or self.path == "/index.html":
-            # Serve the dashboard HTML from ../dashboard/index.html
-            dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
-            if dashboard_path.exists():
-                body = dashboard_path.read_bytes()
+        elif self.path == "/api/sync-instructions":
+            result = generate_copilot_instructions()
+            body = result.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            rel_path = self.path.lstrip("/")
+            if not rel_path or rel_path == "index.html":
+                file_path = dashboard_dir / "index.html"
+            else:
+                file_path = dashboard_dir / rel_path
+
+            if file_path.exists() and file_path.is_file():
+                content_type = "text/html; charset=utf-8"
+                if file_path.suffix == ".css":
+                    content_type = "text/css"
+                elif file_path.suffix == ".js":
+                    content_type = "application/javascript"
+                elif file_path.suffix == ".json":
+                    content_type = "application/json"
+                elif file_path.suffix == ".svg":
+                    content_type = "image/svg+xml"
+
+                body = file_path.read_bytes()
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Type", content_type)
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Content-Length", len(body))
                 self.end_headers()
                 self.wfile.write(body)
             else:
-                self._send_text(404, "Dashboard not found. Run from project root.")
-        else:
-            self._send_text(404, "Not found")
+                self._send_text(404, "Not found")
 
     def _send_text(self, code, msg):
         body = msg.encode()
@@ -601,10 +649,10 @@ def start_dashboard():
     """Start the dashboard HTTP server in a background thread."""
     try:
         server = HTTPServer(("localhost", DASHBOARD_PORT), DashboardHandler)
-        print(f"[CopilotLens] Dashboard: http://localhost:{DASHBOARD_PORT}", flush=True)
+        print(f"[CopilotLens] Dashboard: http://localhost:{DASHBOARD_PORT}", file=sys.stderr, flush=True)
         server.serve_forever()
     except OSError as e:
-        print(f"[CopilotLens] Dashboard could not start on port {DASHBOARD_PORT}: {e}", flush=True)
+        print(f"[CopilotLens] Dashboard could not start on port {DASHBOARD_PORT}: {e}", file=sys.stderr, flush=True)
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -628,7 +676,7 @@ def _interpret_summary(health: dict) -> str:
 # ─── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"[CopilotLens] Starting MCP server for repo: {REPO_PATH}", flush=True)
+    print(f"[CopilotLens] Starting MCP server for repo: {REPO_PATH}", file=sys.stderr, flush=True)
     
     # Start dashboard in background thread
     dashboard_thread = threading.Thread(target=start_dashboard, daemon=True)

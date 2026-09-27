@@ -44,7 +44,7 @@ class GitAnalyzer:
         import subprocess
         try:
             result = subprocess.run(
-                ["git", "-C", str(self.repo_path)] + list(args),
+                ["git", "--no-pager", "-C", str(self.repo_path)] + list(args),
                 capture_output=True, text=True, timeout=30
             )
             return result.stdout.strip()

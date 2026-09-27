@@ -3,8 +3,8 @@ sys.path.insert(0, '.')
 from mcp_server.analyzers.code_health import CodeHealthScorer
 from mcp_server.analyzers.git_analyzer import GitAnalyzer
 
-repo = 'demo_project'
-print('=== CopilotLens: enatega/food-delivery-multivendor ===')
+repo = '.'
+print('=== CopilotLens Analyzer Verification ===')
 print()
 
 # ── Health Score ──────────────────────────────────────────────

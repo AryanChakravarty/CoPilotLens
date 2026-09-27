@@ -99,12 +99,13 @@ class DeadCodeDetector:
         all_content = self._collect_all_content()
 
         # Step 3: Find symbols with zero references (outside their definition file)
+        from collections import Counter
+        # Tokenize all content once to count occurrences (massive speedup)
+        word_counts = Counter(re.findall(r"\b\w+\b", all_content))
+        
         dead_candidates = []
         for symbol, info in definitions.items():
-            # Count how many times this symbol appears across all files
-            # Simple but effective: regex word boundary search
-            pattern = re.compile(r"\b" + re.escape(symbol) + r"\b")
-            count = len(pattern.findall(all_content))
+            count = word_counts.get(symbol, 0)
 
             # A definition itself counts as 1 occurrence; < 2 means likely unused
             if count <= 1:

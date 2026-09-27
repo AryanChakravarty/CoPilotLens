@@ -100,6 +100,13 @@ def run_analysis():
         "blast_radius": blast_radius_data,
         "repo_summary": repo_summary
     }
+    try:
+        cache_path = Path(REPO) / ".dashboard_cache.json"
+        cache_path.write_text(json.dumps(DASHBOARD_DATA, indent=2))
+        print(f"[+] Dashboard data cached at {cache_path}")
+    except Exception as e:
+        print(f"[-] Failed to cache dashboard data")
+
     print(f"\n[+] Analysis complete! Dashboard fully populated at http://localhost:{PORT}\n")
 
 # ── HTTP Handler ───────────────────────────────────────────────────────────────
@@ -108,17 +115,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if "/api/" in self.path:
             print(f"   [{time.strftime('%H:%M:%S')}] {self.requestline}")
 
-    def do_GET(self):
-        if self.path == "/api/data":
-            self._json(DASHBOARD_DATA)
-        elif self.path in ("/", "/index.html"):
-            self._file(DASHBOARD_DIR / "index.html", "text/html; charset=utf-8")
-        elif self.path == "/style.css":
-            self._file(DASHBOARD_DIR / "style.css", "text/css")
-        elif self.path == "/app.js":
-            self._file(DASHBOARD_DIR / "app.js", "application/javascript")
+    def do_POST(self):
+        if self.path == "/api/sync-instructions":
+            from mcp_server.server import generate_copilot_instructions
+            result = generate_copilot_instructions()
+            self._json(json.loads(result))
         else:
             self._text(404, "Not found")
+
+    def do_GET(self):
+        next_out_dir = Path(__file__).parent / "dashboard-next" / "out"
+        dash_dir = next_out_dir if next_out_dir.exists() else DASHBOARD_DIR
+
+        if self.path == "/api/data":
+            self._json(DASHBOARD_DATA)
+        elif self.path == "/api/sync-instructions":
+            from mcp_server.server import generate_copilot_instructions
+            result = generate_copilot_instructions()
+            self._json(json.loads(result))
+        else:
+            rel_path = self.path.lstrip("/")
+            if not rel_path or rel_path == "index.html":
+                target_file = dash_dir / "index.html"
+            else:
+                target_file = dash_dir / rel_path
+
+            if target_file.exists() and target_file.is_file():
+                content_type = "text/html; charset=utf-8"
+                if target_file.suffix == ".css":
+                    content_type = "text/css"
+                elif target_file.suffix == ".js":
+                    content_type = "application/javascript"
+                elif target_file.suffix == ".json":
+                    content_type = "application/json"
+                elif target_file.suffix == ".svg":
+                    content_type = "image/svg+xml"
+
+                self._file(target_file, content_type)
+            else:
+                self._text(404, "Not found")
 
     def _json(self, obj):
         body = json.dumps(obj).encode()

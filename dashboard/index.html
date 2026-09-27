@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -39,6 +41,13 @@
         <span class="status-dot" id="status-dot"></span>
         <span id="status-text">Connecting...</span>
       </div>
+      <button class="btn-sync" onclick="syncCopilotInstructions()" title="Sync Copilot Instructions (.github/copilot-instructions.md)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2v8m0 0l3-3m-3 3L9 7"></path>
+          <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6"></path>
+        </svg>
+        <span>⚡ Sync Copilot</span>
+      </button>
       <button class="btn-refresh" onclick="loadData()" title="Refresh">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="23 4 23 10 17 10"></polyline>
@@ -97,7 +106,8 @@
 
   <!-- Tab Navigation -->
   <div class="tab-nav">
-    <button class="tab-btn active" onclick="switchTab('hotspots', this)">🔥 Hotspots</button>
+    <button class="tab-btn active" onclick="switchTab('graph', this)">🕸️ Visual Graph</button>
+    <button class="tab-btn" onclick="switchTab('hotspots', this)">🔥 Hotspots</button>
     <button class="tab-btn" onclick="switchTab('health', this)">🏥 Health</button>
     <button class="tab-btn" onclick="switchTab('deadcode', this)">🧹 Dead Code</button>
     <button class="tab-btn" onclick="switchTab('dependencies', this)">🔗 Dependencies</button>
@@ -106,14 +116,44 @@
     <button class="tab-btn" onclick="switchTab('owners', this)">👥 Ownership</button>
   </div>
 
-  <!-- Hotspots Tab -->
-  <section class="tab-panel active" id="tab-hotspots">
-    <div class="section-header">
-      <h2>🔥 Churn Hotspots</h2>
-      <p>Files with highest change frequency — highest defect risk</p>
+  <!-- Visual Graphify Tab -->
+  <section class="tab-panel active" id="tab-graph">
+    <div class="section-header" style="display: flex; justify-content: space-between; align-items: flex-end;">
+      <div>
+        <h2>🕸️ Interactive Graphify Knowledge Map</h2>
+        <p>Real-time force layout of codebase modules, hub centrality, circular imports, and blast radius simulation</p>
+      </div>
+      <div class="graph-legend">
+        <span class="legend-item"><span class="dot red"></span> High Churn / Low Health</span>
+        <span class="legend-item"><span class="dot amber"></span> Hub File</span>
+        <span class="legend-item"><span class="dot green"></span> Healthy</span>
+        <span class="legend-item"><span class="dot purple"></span> Circular Dep</span>
+      </div>
     </div>
-    <div class="hotspot-list" id="hotspot-list">
-      <div class="loading-state"><div class="spinner"></div><p>Analyzing git history...</p></div>
+
+    <div class="graph-controls-bar">
+      <input type="text" id="graph-search" placeholder="🔍 Search node (e.g. server.py)..." oninput="searchGraphNode(this.value)" />
+      <select id="graph-layout" onchange="changeGraphLayout(this.value)">
+        <option value="cose">Force Layout (Cose)</option>
+        <option value="concentric">Concentric Circles</option>
+        <option value="circle">Ring Layout</option>
+        <option value="breadthfirst">Hierarchical Tree</option>
+      </select>
+      <button class="graph-btn" onclick="resetGraphView()">Fit View</button>
+      <button class="graph-btn" onclick="toggleHubsOnly()">Filter Hubs</button>
+    </div>
+
+    <div class="graph-layout-wrapper">
+      <div id="cy-container">
+        <div id="cy"></div>
+      </div>
+      <div class="graph-sidebar" id="graph-sidebar">
+        <h3 class="sidebar-title" id="node-detail-title">Select a Node</h3>
+        <p class="sidebar-sub" id="node-detail-sub">Click any file node to inspect centrality and simulate blast radius ripple effects.</p>
+        <div id="node-detail-body">
+          <div class="placeholder-msg">Hover or click a node in the graph</div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -203,6 +243,9 @@
     <button class="prompt-chip" onclick="copyPrompt(this)" data-prompt="Generate the copilot-instructions.md file for this repository">📋 Gen instructions</button>
   </div>
   <div class="copied-toast" id="copied-toast">Copied! Paste in Copilot Agent mode</div>
+</div>
+<!-- End of Copilot Panel (fixed at bottom) -->
+
 <!-- ── Footer ───────────────────────────────────────────────────────────────── -->
 <footer class="footer" style="padding: 16px 24px 80px; font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between;">
   <span>CopilotLens · Codebase Intelligence via MCP</span>

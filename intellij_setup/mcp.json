@@ -3,9 +3,9 @@
     "copilotlens": {
       "command": "python",
       "args": [
-        "PATH_TO_COPILOTLENS/mcp_server/server.py",
+        "C:/CoPilotLens/mcp_server/server.py",
         "--repo",
-        "${workspaceFolder}"
+        "C:/CoPilotLens"
       ],
       "env": {
         "COPILOTLENS_PORT": "8765"

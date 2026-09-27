@@ -72,7 +72,8 @@ class CodeHealthScorer:
             # Skip common non-source dirs
             dirs[:] = [d for d in dirs if d not in {
                 ".git", "node_modules", "__pycache__", ".venv", "venv",
-                "dist", "build", "target", ".idea", ".gradle", "vendor"
+                "dist", "build", "target", ".idea", ".gradle", "vendor",
+                ".next", "out", "dashboard-next"
             }]
             for fname in files:
                 if count >= limit:

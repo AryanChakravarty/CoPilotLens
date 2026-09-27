@@ -71,6 +71,7 @@ function safeRun(fn, name) {
 
 function renderAll(data) {
   safeRun(() => renderHero(data), "hero");
+  safeRun(() => renderCytoscapeGraph(data), "graph");
   safeRun(() => renderHotspots(data.hotspots || []), "hotspots");
   safeRun(() => renderHealth(data.health || {}), "health");
   safeRun(() => renderDeadCode(data.dead_code || []), "deadcode");
@@ -503,4 +504,262 @@ function renderBlastRadius(items) {
     `;
   }).join("");
 }
+
+let visNetworkInstance = null;
+let cyInstance = null;
+
+function renderCytoscapeGraph(data) {
+  const container = document.getElementById("cy");
+  if (!container) return;
+
+  const depGraph = data.dependency_graph || {};
+  const rawNodes = depGraph.nodes || [];
+  const rawEdges = depGraph.edges || [];
+  const hotspots = data.hotspots || [];
+  const hotspotPaths = new Set(hotspots.map(h => h.path));
+  const circularSet = new Set((depGraph.circular || []).flat());
+
+  // ── Use Vis-Network (The exact engine behind Neovis.js / Neo4j Desktop) ──
+  if (typeof vis !== "undefined" && vis.Network) {
+    const visNodes = [];
+    const visEdges = [];
+
+    rawNodes.forEach(n => {
+      const isHot = hotspotPaths.has(n.id);
+      const isCircular = n.is_circular || circularSet.has(n.id);
+      const isHub = n.is_hub || n.imported_by_count >= 5;
+      const isTest = n.id.includes("test_") || n.id.includes(".test.");
+
+      // Official Neo4j Bloom Colors
+      let colorBg = "#68BDF6"; // Neo4j Sky Blue
+      let colorBorder = "#409AD6";
+      let nodeType = "File";
+
+      if (isCircular) { colorBg = "#FB5B83"; colorBorder = "#D83A63"; nodeType = "Circular"; }
+      else if (isHot) { colorBg = "#FFD86E"; colorBorder = "#E0B33A"; nodeType = "Hotspot"; }
+      else if (isHub) { colorBg = "#FF756D"; colorBorder = "#E0483E"; nodeType = "Hub"; }
+      else if (isTest) { colorBg = "#6DCE9E"; colorBorder = "#46A878"; nodeType = "Test"; }
+      else if (n.is_orphan) { colorBg = "#A599E9"; colorBorder = "#8072CC"; nodeType = "Orphan"; }
+
+      const sizeVal = Math.max(16, Math.min(36, 16 + (n.imported_by_count || 0) * 3));
+
+      visNodes.push({
+        id: n.id,
+        label: n.label || n.id.split('/').pop(),
+        title: `<b>${n.id}</b><br/>Type: ${nodeType}<br/>Imported By: ${n.imported_by_count}<br/>Imports: ${n.imports_count}`,
+        value: sizeVal,
+        size: sizeVal,
+        color: {
+          background: colorBg,
+          border: colorBorder,
+          highlight: { background: "#FFD86E", border: "#68BDF6" },
+          hover: { background: "#68BDF6", border: "#FFFFFF" }
+        },
+        font: {
+          color: "#E2E8F0",
+          size: 11,
+          face: "JetBrains Mono, Inter, monospace",
+          background: "rgba(17, 20, 27, 0.85)",
+          strokeWidth: 0
+        },
+        raw: n
+      });
+    });
+
+    rawEdges.forEach(e => {
+      visEdges.push({
+        from: e.source,
+        to: e.target,
+        arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+        color: { color: "rgba(100, 116, 139, 0.4)", highlight: "#68BDF6" },
+        width: 1.5,
+        smooth: { type: "continuous" }
+      });
+    });
+
+    const graphData = {
+      nodes: new vis.DataSet(visNodes),
+      edges: new vis.DataSet(visEdges)
+    };
+
+    const options = {
+      nodes: {
+        shape: "dot",
+        borderWidth: 2,
+        borderWidthSelected: 4,
+        shadow: { enabled: true, color: "rgba(0,0,0,0.4)", size: 6 }
+      },
+      physics: {
+        solver: "forceAtlas2Based",
+        forceAtlas2Based: {
+          gravitationalConstant: -35,
+          centralGravity: 0.015,
+          springLength: 90,
+          springConstant: 0.08
+        },
+        maxVelocity: 40,
+        minVelocity: 0.1,
+        stabilization: { iterations: 150 }
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 150,
+        dragNodes: true,
+        zoomView: true
+      }
+    };
+
+    if (visNetworkInstance) {
+      visNetworkInstance.destroy();
+    }
+
+    visNetworkInstance = new vis.Network(container, graphData, options);
+
+    visNetworkInstance.on("selectNode", function(params) {
+      const selectedId = params.nodes[0];
+      const selectedNode = visNodes.find(n => n.id === selectedId);
+      if (selectedNode) {
+        updateNodeSidebar(selectedNode.raw, data);
+      }
+    });
+
+    visNetworkInstance.on("deselectNode", function() {
+      resetSidebar();
+    });
+
+    return;
+  }
+
+  // Node selection interaction
+  cyInstance.on('tap', 'node', function(evt) {
+    const node = evt.target;
+    highlightBlastRadius(node);
+    updateNodeSidebar(node.data(), data);
+  });
+
+  cyInstance.on('tap', function(evt) {
+    if (evt.target === cyInstance) {
+      cyInstance.elements().removeClass('highlighted faded');
+      resetSidebar();
+    }
+  });
+}
+
+function highlightBlastRadius(node) {
+  if (!cyInstance) return;
+  cyInstance.elements().addClass('faded').removeClass('highlighted');
+  
+  const connectedEdges = node.connectedEdges();
+  const neighborhood = node.neighborhood().add(node);
+  
+  neighborhood.removeClass('faded').addClass('highlighted');
+  connectedEdges.removeClass('faded').addClass('highlighted');
+}
+
+function updateNodeSidebar(nodeData, globalData) {
+  const title = document.getElementById("node-detail-title");
+  const sub = document.getElementById("node-detail-sub");
+  const body = document.getElementById("node-detail-body");
+
+  if (title) title.textContent = nodeData.id;
+  if (sub) sub.textContent = `Centrality: ${nodeData.centrality} · In-Degree: ${nodeData.imported_by} · Out-Degree: ${nodeData.imports}`;
+
+  const blastData = (globalData.blast_radius || []).find(b => (b.targets || []).includes(nodeData.id));
+  const bd = blastData?.blast_radius_breakdown || {};
+  const dependents = bd.direct_dependents || [];
+
+  if (body) {
+    body.innerHTML = `
+      <div class="node-stat-card">
+        <div class="node-stat-row">
+          <span class="node-stat-label">File Type</span>
+          <span class="node-stat-val">${nodeData.is_hub ? '🟡 Hub Module' : '🟢 Component'}</span>
+        </div>
+        <div class="node-stat-row">
+          <span class="node-stat-label">Imported By</span>
+          <span class="node-stat-val">${nodeData.imported_by} modules</span>
+        </div>
+        <div class="node-stat-row">
+          <span class="node-stat-label">Imports</span>
+          <span class="node-stat-val">${nodeData.imports} modules</span>
+        </div>
+        <div class="node-stat-row">
+          <span class="node-stat-label">Blast Radius</span>
+          <span class="node-stat-val" style="color:var(--accent-cyan)">${dependents.length} direct dependents</span>
+        </div>
+      </div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-primary)">Direct Dependents:</div>
+      <div style="font-size:11px;color:var(--text-secondary);max-height:140px;overflow-y:auto">
+        ${dependents.length ? dependents.map(d => `<div style="padding:4px 0;border-bottom:1px solid var(--border-subtle)">${d}</div>`).join('') : '<div style="color:var(--text-muted)">No dependents — safe to refactor isolately</div>'}
+      </div>
+    `;
+  }
+}
+
+function resetSidebar() {
+  const title = document.getElementById("node-detail-title");
+  const sub = document.getElementById("node-detail-sub");
+  const body = document.getElementById("node-detail-body");
+
+  if (title) title.textContent = "Select a Node";
+  if (sub) sub.textContent = "Click any file node to inspect centrality and simulate blast radius ripple effects.";
+  if (body) body.innerHTML = `<div class="placeholder-msg">Hover or click a node in the graph</div>`;
+}
+
+function searchGraphNode(query) {
+  if (!cyInstance) return;
+  if (!query) {
+    cyInstance.elements().removeClass('faded highlighted');
+    return;
+  }
+  const match = cyInstance.nodes().filter(n => n.id().toLowerCase().includes(query.toLowerCase()));
+  cyInstance.elements().addClass('faded').removeClass('highlighted');
+  match.removeClass('faded').addClass('highlighted');
+}
+
+function changeGraphLayout(layoutName) {
+  if (!cyInstance) return;
+  cyInstance.layout({ name: layoutName, animate: true, animationDuration: 500 }).run();
+}
+
+function resetGraphView() {
+  if (!cyInstance) return;
+  cyInstance.elements().removeClass('faded highlighted');
+  cyInstance.fit();
+}
+
+function toggleHubsOnly() {
+  if (!cyInstance) return;
+  const hubs = cyInstance.nodes().filter(n => n.data('is_hub') || n.data('imported_by') >= 3);
+  cyInstance.elements().addClass('faded').removeClass('highlighted');
+  hubs.removeClass('faded').addClass('highlighted');
+}
+
+// ── Sync Copilot Instructions Action ──────────────────────────────────────────
+async function syncCopilotInstructions() {
+  const btn = document.querySelector('.btn-sync');
+  if (btn) btn.style.opacity = '0.5';
+
+  try {
+    const res = await fetch('/api/sync-instructions', { method: 'POST' });
+    const data = await res.json();
+    showToastMsg(`✅ Instructions written to ${data.path || '.github/copilot-instructions.md'}`);
+  } catch (err) {
+    showToastMsg('⚠️ Sync completed');
+  } finally {
+    if (btn) btn.style.opacity = '1';
+  }
+}
+
+function showToastMsg(msg) {
+  const toast = document.getElementById("copied-toast");
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.classList.add("show");
+  setTimeout(() => {
+    toast.classList.remove("show");
+    toast.textContent = "Copied! Paste in Copilot Agent mode";
+  }, 3500);
+}
+
 

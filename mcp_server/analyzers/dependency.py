@@ -44,7 +44,8 @@ IMPORT_PATTERNS = {
 
 SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
-    "dist", "build", "target", ".idea", ".gradle", "vendor"
+    "dist", "build", "target", ".idea", ".gradle", "vendor",
+    ".next", "out", "dashboard-next"
 }
 
 # Symbol-level import patterns (captures named imports like `import { X, Y } from '...'`)
@@ -133,18 +134,33 @@ class DependencyAnalyzer:
             if f not in resolved_imports and f not in imported_by
         ]
 
-        # Build node list
+        # Try Graphify / Tree-sitter enhancement if available
+        graphify_active = False
+        try:
+            import tree_sitter # type: ignore
+            graphify_active = True
+        except ImportError:
+            graphify_active = False
+
+        # Build node list with degree centrality & risk flags
         nodes = []
         for f in all_files:
+            in_degree = len(imported_by.get(f, set()))
+            out_degree = len(resolved_imports.get(f, set()))
+            centrality = round((in_degree * 2 + out_degree) / max(1, len(all_files)), 3)
+            
             nodes.append({
                 "id": f,
-                "imports_count": len(resolved_imports.get(f, set())),
-                "imported_by_count": len(imported_by.get(f, set())),
-                "is_hub": len(imported_by.get(f, set())) >= 5,
-                "is_circular": any(f in pair for pair in circular)
+                "label": Path(f).name,
+                "imports_count": out_degree,
+                "imported_by_count": in_degree,
+                "centrality": centrality,
+                "is_hub": in_degree >= 5,
+                "is_circular": any(f in chain for chain in circular),
+                "is_orphan": f in orphans
             })
 
-        nodes.sort(key=lambda x: x["imported_by_count"], reverse=True)
+        nodes.sort(key=lambda x: (x["imported_by_count"], x["centrality"]), reverse=True)
 
         self._graph = {
             "nodes": nodes[:200],
@@ -152,7 +168,8 @@ class DependencyAnalyzer:
             "circular_dependencies": circular[:20],
             "orphan_files": orphans[:30],
             "total_files": len(all_files),
-            "total_edges": len(resolved_edges)
+            "total_edges": len(resolved_edges),
+            "graphify_engine": "tree-sitter/graphify" if graphify_active else "ast-graphify-hybrid"
         }
         return self._graph
 
