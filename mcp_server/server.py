@@ -41,6 +41,26 @@ from analyzers.cache import AnalysisCache
 from analyzers.why_analyzer import WhyAnalyzer
 from analyzers.search_analyzer import CodebaseSearch
 from analyzers.blast_radius import BlastRadiusAnalyzer
+from analyzers.xml_analyzer import XmlAnalyzer
+from analyzers.logic_action_generator import LogicActionGenerator
+from analyzers.drc_validator import DrcValidator
+from analyzers.clogic_session_analyzer import CLogicSessionAnalyzer
+
+
+
+
+
+# Atlassian Integrations
+try:
+    from integrations.atlassian.jira import jira_manager
+    from integrations.atlassian.confluence import confluence_manager
+    from integrations.atlassian.bitbucket import bitbucket_manager
+    ATLASSIAN_AVAILABLE = True
+except Exception:
+    ATLASSIAN_AVAILABLE = False
+
+
+
 
 # ─── Argument Parsing ──────────────────────────────────────────────────────────
 
@@ -76,6 +96,15 @@ dead_code_detector = DeadCodeDetector(REPO_PATH)
 why_analyzer = WhyAnalyzer(REPO_PATH)
 search_engine = CodebaseSearch(REPO_PATH)
 blast_analyzer = BlastRadiusAnalyzer(REPO_PATH, dep_analyzer, git_analyzer)
+xml_analyzer = XmlAnalyzer(REPO_PATH, search_engine=search_engine)
+action_generator = LogicActionGenerator(REPO_PATH)
+drc_validator = DrcValidator(REPO_PATH)
+clogic_session_analyzer = CLogicSessionAnalyzer(REPO_PATH, xml_analyzer=xml_analyzer, drc_validator=drc_validator)
+clogic_session_analyzer.start_monitoring()
+
+
+
+
 
 # ─── MCP Server ────────────────────────────────────────────────────────────────
 
@@ -432,6 +461,202 @@ def get_blast_radius(file_path: str) -> str:
     """
     result = blast_analyzer.calculate_blast_radius(file_path)
     return json.dumps(result, indent=2)
+
+
+# ─── Atlassian MCP Tools ───────────────────────────────────────────────────────
+
+# ─── Atlassian MCP Tools ───────────────────────────────────────────────────────
+
+@mcp.tool()
+def get_jira_issues_for_file(file_path: str) -> str:
+    """
+    Search Jira for open defects, bugs, or tasks linked to a specific source file.
+
+    Args:
+        file_path: Relative path to the file (e.g., 'src/service/UserService.java')
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = jira_manager.get_issues_for_file(file_path)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def create_jira_issue(summary: str, description: str, issue_type: str = "Bug") -> str:
+    """
+    Create a new Jira issue (Bug, Task, etc.) directly from CoPilotLens findings.
+
+    Args:
+        summary: Short title of the issue
+        description: Detailed explanation, code snippet, or steps to reproduce
+        issue_type: Type of issue ('Bug', 'Task', 'Improvement', default is 'Bug')
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = jira_manager.create_issue(summary, description, issue_type)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def update_jira_issue(issue_key: str, append_description: str = None, new_summary: str = None) -> str:
+    """
+    Update an existing Jira issue by appending text to its description or changing its summary.
+
+    Args:
+        issue_key: The issue key (e.g. 'PVC-4464')
+        append_description: Optional text to append to the existing issue description
+        new_summary: Optional new summary/title for the issue
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = jira_manager.update_issue(issue_key, summary=new_summary, append_description=append_description)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def get_confluence_page(topic: str) -> str:
+    """
+    Retrieve architecture, design, or health documentation from Confluence.
+
+    Args:
+        topic: Topic, title, or search terms to look up in Confluence
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = confluence_manager.get_page(topic)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def update_confluence_page(title_or_id: str, prepend_html: str = None, append_html: str = None) -> str:
+    """
+    Edit an existing Confluence page by prepending or appending text/HTML content.
+
+    Args:
+        title_or_id: Title or page ID of the Confluence page to edit
+        prepend_html: Text/HTML content to add to the TOP of the page
+        append_html: Text/HTML content to add to the BOTTOM of the page
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = confluence_manager.update_page(title_or_id, prepend_html=prepend_html, append_html=append_html)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def get_pr_context(pr_id: str) -> str:
+    """
+    Fetch Pull Request metadata from Bitbucket (modified files, author, target branch).
+
+    Args:
+        pr_id: Pull Request ID or key (e.g. '42')
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = bitbucket_manager.get_pr_context(pr_id)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def annotate_pr(pr_id: str, comment_markdown: str) -> str:
+    """
+    Post a review comment or code health analysis to a Bitbucket Pull Request.
+
+    Args:
+        pr_id: Pull Request ID or key (e.g. '42')
+        comment_markdown: Markdown formatted feedback or review analysis
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = bitbucket_manager.annotate_pr(pr_id, comment_markdown)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def get_recent_prs(limit: int = 5) -> str:
+    """
+    Fetch recent Pull Requests from Bitbucket and return their details and summaries.
+
+    Args:
+        limit: Number of recent PRs to retrieve (default is 5)
+    """
+    if not ATLASSIAN_AVAILABLE:
+        return json.dumps({"error": "Atlassian integration modules not available."})
+    res = bitbucket_manager.get_recent_prs(limit=limit)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def analyze_xml_design(xml_input: str, detail: str = "summary") -> str:
+    """
+    Analyze a Capital XML file or raw XML string and return its complete structured report:
+    document metadata and tag inventory; object instances, attributes, containment, and ID references;
+    logical-design snapshots (hierarchy trees) and paired before/after changes; related source files;
+    evidence-based scenario interpretations; and conditional object/scenario ideas with downstream uses.
+    The response starts with a human-readable Markdown report — present it to the user in full,
+    followed by any extra detail from the JSON. Treat the XML as serialized state, distinguish
+    filename-derived hypotheses from confirmed contents, and do not invent details not in the report.
+
+    Args:
+        xml_input: Absolute/relative XML file path or raw XML string
+        detail: "summary" (default, compact) or "full" (every instance, attribute and reference)
+    """
+    res = xml_analyzer.analyze_xml(xml_input, detail=detail)
+    if res.get("error"):
+        return json.dumps(res, indent=2)
+    markdown = res.pop("report_markdown")
+    return markdown + "\n\n---\n## Structured data (JSON)\n```json\n" + json.dumps(res, indent=1) + "\n```"
+
+
+@mcp.tool()
+def generate_logic_action(action_name: str, target_object: str = "DEVICE_CONNECTOR", package_name: str = "chs.caplets.logic.actions") -> str:
+    """
+    Generate production-ready Java Caplet Action boilerplate (subclassing AbstractAction),
+    XML action configuration snippet, and JUnit component test scaffold for Capital Logic.
+
+    Args:
+        action_name: Name of the action (e.g., 'RemoveLibPartAction')
+        target_object: Target domain object type (e.g. 'DEVICE_CONNECTOR', 'BACKSHELL', 'MULTICORE')
+        package_name: Target Java package name (default is 'chs.caplets.logic.actions')
+    """
+    res = action_generator.generate_action(action_name, target_object, package_name)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def validate_design_drc(xml_input: str) -> str:
+    """
+    Run Capital Design Rule Checks (DRC) on a design XML payload or file.
+    Validates cavity seals, dangling bundles, multicore path consistency, and splice separation.
+
+    Args:
+        xml_input: Path to design XML file or inline XML string
+    """
+    res = drc_validator.validate_drc(xml_input)
+    return json.dumps(res, indent=2)
+
+
+@mcp.tool()
+def inspect_live_clogic_session(target_xml_or_session: str = None) -> str:
+    """
+    Inspect the latest CLogic design XML state and changes captured by the background workspace/log poller.
+    Reports placed objects, observed add/change/remove events, next-step suggestions, and a QA reproduction checklist.
+    Monitoring begins with the MCP server. Configure CLOGIC_SESSION_DIR / CLOGIC_SESSION_XML and
+    CLOGIC_LOG_PATH / CMANAGER_LOG_PATH if the local installation uses different paths. DRC output is a
+    CopilotLens heuristic preflight, not a native Capital DRC execution.
+
+    Args:
+        target_xml_or_session: Optional XML path or inline XML for one-off analysis; omit it for polled live state.
+    """
+    res = clogic_session_analyzer.inspect_live_session(target_xml_or_session)
+    return json.dumps(res, indent=2)
+
+
+
+
+
+
+
 
 
 @mcp.tool()
